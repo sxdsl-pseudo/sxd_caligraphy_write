@@ -133,8 +133,6 @@
         <span class="butt" id="loadJsonButton" onclick="document.getElementById('loadJsonInput').click()" title="导入备份">📥 导入</span>
     </div>
 
-    
-
     <div id="settingsDialog" class="dialog">
         <div class="dialog-body">
             <span class="close-btn" onclick="closeDialog('settingsDialog')">×</span>
@@ -350,82 +348,127 @@
         }
 
         function start(e) {
-            e.preventDefault(); 
-            isDrawing = true; 
+            e.preventDefault();
+            isDrawing = true;
             currentStrokePoints = [];
             const pos = getVirtualPos(e);
-            // 初始点加入一个基础宽度
-            pos.w = appSettings.baseWidth; 
+            pos.w = appSettings.baseWidth;      // 初始宽度
+            pos.v = 0;                          // 初始速度
+            pos.dist = 0;                       // 累计路径长度（用于锥度）
             currentStrokePoints.push(pos);
-            
-            renderCanvas(); // 实时重绘
+            renderCanvas();
         }
         
         function move(e) {
-            if(!isDrawing) return; 
+            if (!isDrawing) return;
             e.preventDefault();
-            const pos = getVirtualPos(e);
-            
-            // === 压感计算逻辑 ===
+
+            const rawPos = getVirtualPos(e);
             const lastPt = currentStrokePoints[currentStrokePoints.length - 1];
+
+            // ----- 坐标平滑（指数平滑，减少抖动）-----
+            const smoothX = lastPt.x * 0.2 + rawPos.x * 0.8;
+            const smoothY = lastPt.y * 0.2 + rawPos.y * 0.8;
+            const pos = { x: smoothX, y: smoothY, time: rawPos.time };
+
+            // 计算与上一个点的距离
             const dist = Math.hypot(pos.x - lastPt.x, pos.y - lastPt.y);
+            if (dist < 0.5) return; // 距离太近，忽略（防止点过于密集）
+
+            // ----- 速度计算与平滑 -----
             const timeDiff = pos.time - lastPt.time;
-            
-            // 速度 (pixels/ms)
-            const velocity = timeDiff > 0 ? dist / timeDiff : 0;
-            
-            // 动态宽度算法: 速度越快，宽度越细
-            // 系数 2 是经验值，可微调
-            let targetWidth = appSettings.baseWidth * (1 - velocity * appSettings.pressure * 0.5); 
-            // 限制最小宽度
+            const rawVelocity = timeDiff > 0 ? dist / timeDiff : 0;
+            const smoothedV = lastPt.v * 0.7 + rawVelocity * 0.3; // EMA平滑
+            pos.v = smoothedV;
+
+            // ----- 宽度计算（速度越快越细）-----
+            const speedFactor = Math.min(0.8, smoothedV * appSettings.pressure * 0.8);
+            let targetWidth = appSettings.baseWidth * (1 - speedFactor);
             targetWidth = Math.max(targetWidth, appSettings.baseWidth * 0.2);
-            
-            // 平滑处理：新宽度 = 旧宽度 * 0.6 + 新目标 * 0.4
-            pos.w = lastPt.w * 0.6 + targetWidth * 0.4;
+            pos.w = lastPt.w * 0.6 + targetWidth * 0.4; // 宽度平滑
+
+            // 累计路径长度（用于锥度）
+            pos.dist = lastPt.dist + dist;
+
+            // 如果距离较大（>3像素），在两点间插入中间点，使线条更平滑
+            if (dist > 3) {
+                const steps = Math.floor(dist / 2); // 每2像素插一个点
+                for (let s = 1; s <= steps; s++) {
+                    const t = s / (steps + 1);
+                    const interpX = lastPt.x * (1 - t) + pos.x * t;
+                    const interpY = lastPt.y * (1 - t) + pos.y * t;
+                    const interpW = lastPt.w * (1 - t) + pos.w * t;
+                    const interpDist = lastPt.dist + dist * t;
+                    currentStrokePoints.push({
+                        x: interpX, y: interpY,
+                        w: interpW,
+                        v: smoothedV, // 速度沿用当前平滑值
+                        dist: interpDist,
+                        time: pos.time
+                    });
+                }
+            }
 
             currentStrokePoints.push(pos);
-            renderCanvas(); 
+            renderCanvas();
         }
-        
-        function end(e) {
-            if(!isDrawing) return; 
-            isDrawing = false;
-            
-            // === 锥度处理 (Tapering) ===
-            // 结束后对整条线的头尾进行修饰
-            if (currentStrokePoints.length > 5 && appSettings.taper > 0) {
-                const len = currentStrokePoints.length;
-                const taperLen = Math.floor(len * appSettings.taper * 0.5); // 单侧锥度长度
-                const maxTaper = Math.min(taperLen, 10); // 限制最大锥度点数
 
-                for (let i = 0; i < maxTaper; i++) {
-                    const factor = (i + 1) / (maxTaper + 1); // 0.1 -> 1.0
-                    // 头部变细
-                    currentStrokePoints[i].w *= factor;
-                    // 尾部变细
-                    currentStrokePoints[len - 1 - i].w *= factor;
+
+
+
+        function end(e) {
+            if (!isDrawing) return;
+            isDrawing = false;
+
+            if (currentStrokePoints.length > 5 && appSettings.taper > 0) {
+                const totalDist = currentStrokePoints[currentStrokePoints.length - 1].dist;
+                const taperLen = totalDist * appSettings.taper * 0.3; // 锥度占总长的比例（可调）
+                const minWidthFactor = 0.3; // 最细处为基础宽度的30%
+
+                // 起笔锥度
+                for (let i = 0; i < currentStrokePoints.length; i++) {
+                    const pt = currentStrokePoints[i];
+                    if (pt.dist <= taperLen) {
+                        // 距离起点越近，宽度越小
+                        const factor = minWidthFactor + (1 - minWidthFactor) * (pt.dist / taperLen);
+                        pt.w *= factor;
+                    } else {
+                        break;
+                    }
+                }
+
+                // 收笔锥度
+                for (let i = currentStrokePoints.length - 1; i >= 0; i--) {
+                    const pt = currentStrokePoints[i];
+                    const distFromEnd = totalDist - pt.dist;
+                    if (distFromEnd <= taperLen) {
+                        const factor = minWidthFactor + (1 - minWidthFactor) * (distFromEnd / taperLen);
+                        pt.w *= factor;
+                    } else {
+                        break;
+                    }
                 }
             }
 
             const char = charList[currentIndex];
             if (!allGlyphData[char]) allGlyphData[char] = [];
-            
-            if(currentStrokePoints.length > 1) {
+
+            if (currentStrokePoints.length > 1) {
                 allGlyphData[char].push({
-                    points: JSON.parse(JSON.stringify(currentStrokePoints)), // 此时点里已经包含了 w (width)
-                    width: appSettings.baseWidth, // 保留基础宽度做参考
+                    points: JSON.parse(JSON.stringify(currentStrokePoints)),
+                    width: appSettings.baseWidth,
                     isEraser: isEraser
                 });
             }
             renderCanvas();
         }
 
+
         function renderCanvas() {
             ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
             const char = charList[currentIndex];
             const savedStrokes = allGlyphData[char] || [];
-            
-            // 合并已保存的笔画和当前正在画的笔画
+
             const strokesToRender = [...savedStrokes];
             if (isDrawing && currentStrokePoints.length > 0) {
                 strokesToRender.push({
@@ -438,45 +481,54 @@
             applyTransform(ctx);
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
+            ctx.globalCompositeOperation = 'source-over';
 
             strokesToRender.forEach(stroke => {
                 const pts = stroke.points;
-                if (pts.length < 1) return;
+                if (pts.length < 2) return;
 
-                ctx.strokeStyle = stroke.isEraser ? '#ffffff' : '#000000';
-                ctx.globalCompositeOperation = stroke.isEraser ? 'destination-out' : 'source-over';
+                if (stroke.isEraser) {
+                    // 橡皮擦：简单画线，固定宽度
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = stroke.width;
+                    ctx.beginPath();
+                    ctx.moveTo(pts[0].x, pts[0].y);
+                    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+                    ctx.stroke();
+                    return;
+                }
 
-                // === 绘制变宽线条 (模拟) ===
-                // Canvas 原生 stroke 不支持变宽，为了性能和效果，这里使用“圆点+连线”混合
-                // 或者简单使用 lineTo 但不断改变 lineWidth (效果一般会断裂)
-                // 最佳方案是绘制路径轮廓，但太慢。
-                // 妥协方案：每段画一条线，宽度取两点平均值
-                
+                // 绘制普通笔画（变宽）
+                ctx.strokeStyle = '#000000';
+                ctx.fillStyle = '#000000';
+
+                // 第一个点画圆（确保起始饱满）
+                ctx.beginPath();
+                ctx.arc(pts[0].x, pts[0].y, pts[0].w / 2, 0, Math.PI * 2);
+                ctx.fill();
+
                 for (let i = 0; i < pts.length - 1; i++) {
                     const p1 = pts[i];
-                    const p2 = pts[i+1];
-                    
+                    const p2 = pts[i + 1];
+                    const w = (p1.w + p2.w) / 2;
+
+                    // 画线段
+                    ctx.lineWidth = w;
                     ctx.beginPath();
                     ctx.moveTo(p1.x, p1.y);
                     ctx.lineTo(p2.x, p2.y);
-                    
-                    // 使用两点平均宽度
-                    // 如果是橡皮擦，固定使用基础宽度
-                    ctx.lineWidth = stroke.isEraser ? stroke.width : (p1.w + p2.w) / 2;
                     ctx.stroke();
-                    
-                    // 补圆头防止断裂
+
+                    // 在 p2 处画圆点，确保连接处饱满
                     ctx.beginPath();
-                    ctx.arc(p2.x, p2.y, ctx.lineWidth/2, 0, Math.PI*2);
-                    ctx.fillStyle = ctx.strokeStyle;
+                    ctx.arc(p2.x, p2.y, w / 2, 0, Math.PI * 2);
                     ctx.fill();
                 }
             });
+
             ctx.restore();
-            ctx.globalCompositeOperation = 'source-over';
         }
 
-        
         // ================= 6. TTF 生成算法 (支持变宽 + 动态字距) =================
         function generateAndDownloadFont() {
             const FIXED_ADVANCE = appSettings.glyphWidth;  // 从设置读取

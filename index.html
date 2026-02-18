@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>手写字体生成器 - 专业版</title>
+    <title>手写字体生成器</title>
     <script src="https://cdn.jsdelivr.net/npm/opentype.js@latest/dist/opentype.min.js"></script>
     
     <style>
@@ -186,6 +186,14 @@
                 </div>
                 <div style="font-size:0.8rem; color:#888;">让笔画的起笔和收笔处自然变尖。</div>
             </div>
+            <div class="setting-item">
+                <label>📐 字形宽度 (advanceWidth)</label>
+                <div class="setting-row">
+                    <input type="range" id="set_glyphWidth" min="600" max="1400" value="1000" step="10" style="flex:1">
+                    <span class="setting-val" id="val_glyphWidth">1000</span>
+                </div>
+                <div style="font-size:0.8rem; color:#888;">每个字符占用的水平空间（字体单位），值越大字符间距越大。</div>
+            </div>
 
             <button onclick="closeDialog('settingsDialog')" style="margin-top:10px; padding:10px; background:var(--primary-color); color:white; border:none; border-radius:5px;">完成设置</button>
         </div>
@@ -248,7 +256,8 @@
             pressure: 0.6, // 0.0 - 1.0 (velocity influence)
             taper: 0.4,    // 0.0 - 1.0 (length percentage)
             fontNameEn: "MyHandwriting",
-            fontNameZh: "我的手写体"
+            fontNameZh: "我的手写体",
+            glyphWidth: 1000 
         };
 
         let charDatasets = {}; 
@@ -295,6 +304,9 @@
 
             document.getElementById('set_taper').value = appSettings.taper * 100;
             document.getElementById('val_taper').innerText = Math.round(appSettings.taper * 100) + '%';
+
+            document.getElementById('set_glyphWidth').value = appSettings.glyphWidth;
+            document.getElementById('val_glyphWidth').innerText = appSettings.glyphWidth;
         }
 
         // 绑定设置面板事件
@@ -322,7 +334,10 @@
         };
         document.getElementById('fontNameInput').oninput = function() { appSettings.fontNameEn = this.value; };
         document.getElementById('fontFamilyInput').oninput = function() { appSettings.fontNameZh = this.value; };
-
+        document.getElementById('set_glyphWidth').oninput = function() {
+            appSettings.glyphWidth = parseInt(this.value);
+            document.getElementById('val_glyphWidth').innerText = this.value;
+        };
 
         // ================= 5. 核心绘图 (带压感和锥度) =================
 
@@ -477,11 +492,11 @@
         
         // ================= 6. TTF 生成算法 (支持变宽 + 动态字距) =================
         function generateAndDownloadFont() {
-            const MIN_ADVANCE = 100;              // 最小字符宽度，防止过窄字符不可见
+            const FIXED_ADVANCE = appSettings.glyphWidth;  // 从设置读取
             const glyphs = [];
             const notdefPath = new opentype.Path();
             notdefPath.moveTo(200, 0); notdefPath.lineTo(200, 700); notdefPath.lineTo(800, 700); notdefPath.lineTo(800, 0); notdefPath.close();
-            glyphs.push(new opentype.Glyph({ name: '.notdef', unicode: 0, advanceWidth: 1000, path: notdefPath }));
+            glyphs.push(new opentype.Glyph({ name: '.notdef', unicode: 0, advanceWidth: FIXED_ADVANCE, path: notdefPath }));
 
             const SCALE = 1000 / CANVAS_SIZE;
 
@@ -512,7 +527,6 @@
                         const w1 = (p1.w || stroke.width) / 2;
                         const w2 = (p2.w || stroke.width) / 2;
 
-                        // 左、右轮廓点
                         const leftP1 = { x: toFontX(p1.x + nx * w1), y: toFontY(p1.y + ny * w1) };
                         const leftP2 = { x: toFontX(p2.x + nx * w2), y: toFontY(p2.y + ny * w2) };
                         const rightP1 = { x: toFontX(p1.x - nx * w1), y: toFontY(p1.y - ny * w1) };
@@ -526,14 +540,13 @@
                     }
                 });
 
-                if (allPoints.length === 0) continue; // 无有效笔画
+                if (allPoints.length === 0) continue;
 
-                // 计算平移量，使最左点对齐到 0（不留左边空白）
-                const dx = -minX;
                 const width = maxX - minX;
-                const advanceWidth = Math.max(width, MIN_ADVANCE);
+                // 计算水平偏移量，使字形居中于 FIXED_ADVANCE 宽度内
+                const dx = (FIXED_ADVANCE - width) / 2 - minX;
 
-                // ---------- 第二遍：构建字形路径，应用平移 ----------
+                // ---------- 第二遍：构建字形路径，应用居中平移 ----------
                 const fontPath = new opentype.Path();
 
                 strokes.forEach(stroke => {
@@ -550,7 +563,7 @@
                         if (len === 0) continue;
 
                         const nx = -dy / len, ny = dxLine / len;
-                        const toFontX = (cx) => cx * SCALE + dx; // 应用水平平移，使最左点对齐 0
+                        const toFontX = (cx) => cx * SCALE + dx; // 应用居中平移
                         const toFontY = (cy) => (CANVAS_SIZE - cy) * SCALE - 200;
 
                         const w1 = (p1.w || stroke.width) / 2;
@@ -579,12 +592,11 @@
                 glyphs.push(new opentype.Glyph({
                     name: 'uni' + unicodeVal.toString(16).toUpperCase(),
                     unicode: unicodeVal,
-                    advanceWidth: advanceWidth,
+                    advanceWidth: FIXED_ADVANCE,
                     path: fontPath
                 }));
             }
 
-            // 创建字体并下载
             const font = new opentype.Font({
                 familyName: appSettings.fontNameEn,
                 styleName: 'Regular',
@@ -611,6 +623,9 @@
                 alert('字体生成失败：' + e.message);
             }
         }
+
+
+        
         // ================= 通用辅助 =================
         function updateUI() {
             if(!charList || charList.length === 0) return;

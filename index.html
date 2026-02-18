@@ -452,8 +452,8 @@
             ctx.globalCompositeOperation = 'source-over';
         }
 
-        // ================= 6. TTF 生成算法 (支持变宽) =================
         
+        // ================= 6. TTF 生成算法 (支持变宽 + 动态字距) =================
         function generateAndDownloadFont() {
             const glyphs = [];
             const notdefPath = new opentype.Path();
@@ -467,6 +467,9 @@
                 if (!strokes || strokes.length === 0) continue;
                 const fontPath = new opentype.Path();
                 const unicodeVal = char.codePointAt(0);
+                
+                // 用于计算字符实际宽度的边界变量
+                let minX = Infinity, maxX = -Infinity;
 
                 strokes.forEach(stroke => {
                     if (stroke.isEraser) return; 
@@ -488,13 +491,21 @@
                         const w1 = (p1.w || stroke.width) / 2;
                         const w2 = (p2.w || stroke.width) / 2;
 
-                        leftSide.push({ x: toFontX(p1.x + nx * w1), y: toFontY(p1.y + ny * w1) });
-                        rightSide.push({ x: toFontX(p1.x - nx * w1), y: toFontY(p1.y - ny * w1) });
-
-                        if (i === pts.length - 2) {
-                            leftSide.push({ x: toFontX(p2.x + nx * w2), y: toFontY(p2.y + ny * w2) });
-                            rightSide.push({ x: toFontX(p2.x - nx * w2), y: toFontY(p2.y - ny * w2) });
-                        }
+                        // 左边界点（笔画轮廓左侧）
+                        const leftP1 = { x: toFontX(p1.x + nx * w1), y: toFontY(p1.y + ny * w1) };
+                        const leftP2 = { x: toFontX(p2.x + nx * w2), y: toFontY(p2.y + ny * w2) };
+                        leftSide.push(leftP1);
+                        if (i === pts.length - 2) leftSide.push(leftP2);
+                        
+                        // 右边界点（笔画轮廓右侧）
+                        const rightP1 = { x: toFontX(p1.x - nx * w1), y: toFontY(p1.y - ny * w1) };
+                        const rightP2 = { x: toFontX(p2.x - nx * w2), y: toFontY(p2.y - ny * w2) };
+                        rightSide.push(rightP1);
+                        if (i === pts.length - 2) rightSide.push(rightP2);
+                        
+                        // 更新整体边界
+                        minX = Math.min(minX, leftP1.x, rightP1.x, leftP2.x, rightP2.x);
+                        maxX = Math.max(maxX, leftP1.x, rightP1.x, leftP2.x, rightP2.x);
                     }
 
                     if (leftSide.length > 0) {
@@ -505,10 +516,18 @@
                     }
                 });
 
+                // 根据实际轮廓宽度计算合适的 advanceWidth
+                let advanceWidth = 1000; // 默认值
+                if (minX !== Infinity && maxX !== -Infinity) {
+                    let width = maxX - minX;
+                    // 增加 10% 的边距，同时限制最小宽度 300，最大宽度 1000
+                    advanceWidth = Math.min(1000, Math.max(300, width * 1.1));
+                }
+
                 glyphs.push(new opentype.Glyph({
                     name: 'uni' + unicodeVal.toString(16).toUpperCase(),
                     unicode: unicodeVal,
-                    advanceWidth: 1000,
+                    advanceWidth: advanceWidth,
                     path: fontPath
                 }));
             }
@@ -524,14 +543,14 @@
             font.names.fontFamily.en = appSettings.fontNameEn;
             font.names.fullName.en = appSettings.fontNameEn;
             
-            // ===== 替换原有的 font.download() 为手动下载 =====
+            // 手动下载
             try {
                 const buffer = font.toArrayBuffer();
-                const blob = new Blob([buffer], { type: 'application/font-sfnt' }); // TTF 的 MIME 类型
+                const blob = new Blob([buffer], { type: 'application/font-sfnt' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = (appSettings.fontNameEn || 'MyHandwriting') + '.ttf'; // 强制使用 .ttf 扩展名
+                a.download = (appSettings.fontNameEn || 'MyHandwriting') + '.ttf';
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);

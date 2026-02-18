@@ -98,6 +98,17 @@
         </div>
     </div>
 
+    <!-- 按钮容器移到画布下方，紧挨画布 -->
+    <div id="button-container">
+        <span class="butt" id="undoButton" title="撤销">↩️</span>
+        <span class="butt" id="clearButton" title="清空">🗑️</span>
+        <span style="border-left:1px solid #ccc; height:20px; margin:0 5px;"></span>
+        <span class="butt" id="moveLeftButton">⬅️</span>
+        <span class="butt" id="moveRightButton">➡️</span>
+        <span class="butt" id="moveUpButton">⬆️</span>
+        <span class="butt" id="moveDownButton">⬇️</span>
+    </div>
+
     <div id="slider-container">
         <div class="control-group">
             <span class="butt active" id="penButton">🖌️</span>
@@ -123,28 +134,18 @@
     </div>
 
     <!-- 测试预览区域 -->
-    <div id="test-container" style="margin-top:20px; width:100%; max-width:600px;">
+    <div id="test-container" style="margin-top:20px; width:100%; max-width:600px; display: flex; flex-direction: column;">
         <textarea id="testInput" rows="3" placeholder="输入文字测试（支持换行）..." 
-            style="width:100%; padding:8px; border:1px solid #ddd; border-radius:5px; resize:vertical; box-sizing:border-box; margin-bottom:8px;"></textarea>
-        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            style="width:100%; padding:8px; border:1px solid #ddd; border-radius:5px; resize:vertical; box-sizing:border-box; margin-bottom:8px; order:2;"></textarea>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; order:2;">
             <button id="refreshTestBtn" class="butt" style="width:auto; padding:0 15px;">预览</button>
             <div class="control-group" style="margin:0;">
                 <label style="font-size:0.9rem;">🔍 预览缩放</label>
-                <input id="testZoomSlider" type="range" min="0.2" max="2.0" step="0.1" value="1.0" style="width:80px;">
+                <input id="testZoomSlider" type="range" min="0.2" max="1.0" step="0.1" value="1.0" style="width:80px;">
                 <span id="testZoomValue" style="font-size:0.8rem; min-width:40px;">1.0x</span>
             </div>
         </div>
-        <canvas id="testCanvas" width="350" height="200" style="border:1px solid #ccc; margin-top:40px; margin-left:40px;  background:#fff; border-radius:5px;"></canvas>
-    </div>
-
-    <div id="button-container">
-        <span class="butt" id="undoButton" title="撤销">↩️</span>
-        <span class="butt" id="clearButton" title="清空">🗑️</span>
-        <span style="border-left:1px solid #ccc; height:20px; margin:0 5px;"></span>
-        <span class="butt" id="moveLeftButton">⬅️</span>
-        <span class="butt" id="moveRightButton">➡️</span>
-        <span class="butt" id="moveUpButton">⬆️</span>
-        <span class="butt" id="moveDownButton">⬇️</span>
+        <canvas id="testCanvas" width="350" height="200" style="border:1px solid #ccc; margin-top:600px; margin-left:40px; background:#fff; border-radius:5px; order:1;"></canvas>
     </div>
 
     <div id="settingsDialog" class="dialog">
@@ -476,57 +477,95 @@
         
         // ================= 6. TTF 生成算法 (支持变宽 + 动态字距) =================
         function generateAndDownloadFont() {
+            const LEFT_BEARING = 80;   // 左侧固定留白（字体单位，可自行调整）
+            const RIGHT_BEARING = 80;  // 右侧固定留白
             const glyphs = [];
             const notdefPath = new opentype.Path();
             notdefPath.moveTo(200, 0); notdefPath.lineTo(200, 700); notdefPath.lineTo(800, 700); notdefPath.lineTo(800, 0); notdefPath.close();
             glyphs.push(new opentype.Glyph({ name: '.notdef', unicode: 0, advanceWidth: 1000, path: notdefPath }));
-            
+
             const SCALE = 1000 / CANVAS_SIZE;
 
             for (let char in allGlyphData) {
                 const strokes = allGlyphData[char];
                 if (!strokes || strokes.length === 0) continue;
-                const fontPath = new opentype.Path();
-                const unicodeVal = char.codePointAt(0);
-                
-                // 用于计算字符实际宽度的边界变量
+
+                // ---------- 第一遍：收集所有轮廓点，计算原始宽度范围 ----------
+                let allPoints = [];
                 let minX = Infinity, maxX = -Infinity;
 
                 strokes.forEach(stroke => {
-                    if (stroke.isEraser) return; 
+                    if (stroke.isEraser) return;
+                    const pts = stroke.points;
+                    if (pts.length < 2) return;
+
+                    for (let i = 0; i < pts.length - 1; i++) {
+                        const p1 = pts[i];
+                        const p2 = pts[i + 1];
+                        const dx = p2.x - p1.x, dy = p2.y - p1.y;
+                        const len = Math.sqrt(dx * dx + dy * dy);
+                        if (len === 0) continue;
+
+                        const nx = -dy / len, ny = dx / len;
+                        const toFontX = (cx) => cx * SCALE;
+                        const toFontY = (cy) => (CANVAS_SIZE - cy) * SCALE - 200;
+
+                        const w1 = (p1.w || stroke.width) / 2;
+                        const w2 = (p2.w || stroke.width) / 2;
+
+                        // 左、右轮廓点
+                        const leftP1 = { x: toFontX(p1.x + nx * w1), y: toFontY(p1.y + ny * w1) };
+                        const leftP2 = { x: toFontX(p2.x + nx * w2), y: toFontY(p2.y + ny * w2) };
+                        const rightP1 = { x: toFontX(p1.x - nx * w1), y: toFontY(p1.y - ny * w1) };
+                        const rightP2 = { x: toFontX(p2.x - nx * w2), y: toFontY(p2.y - ny * w2) };
+
+                        [leftP1, leftP2, rightP1, rightP2].forEach(pt => {
+                            allPoints.push(pt);
+                            minX = Math.min(minX, pt.x);
+                            maxX = Math.max(maxX, pt.x);
+                        });
+                    }
+                });
+
+                if (allPoints.length === 0) continue; // 无有效笔画
+
+                // 计算平移量，使最左侧点对齐 LEFT_BEARING
+                const dx = LEFT_BEARING - minX;
+                const width = maxX - minX;                // 原始轮廓宽度
+                const advanceWidth = width + LEFT_BEARING + RIGHT_BEARING;
+
+                // ---------- 第二遍：构建字形路径，应用平移 ----------
+                const fontPath = new opentype.Path();
+
+                strokes.forEach(stroke => {
+                    if (stroke.isEraser) return;
                     const pts = stroke.points;
                     if (pts.length < 2) return;
 
                     const leftSide = [], rightSide = [];
                     for (let i = 0; i < pts.length - 1; i++) {
                         const p1 = pts[i];
-                        const p2 = pts[i+1];
-                        let dx = p2.x - p1.x, dy = p2.y - p1.y;
-                        const len = Math.sqrt(dx*dx + dy*dy);
+                        const p2 = pts[i + 1];
+                        const dxLine = p2.x - p1.x, dy = p2.y - p1.y;
+                        const len = Math.sqrt(dxLine * dxLine + dy * dy);
                         if (len === 0) continue;
-                        
-                        const nx = -dy / len, ny = dx / len;
-                        const toFontX = (cx) => cx * SCALE;
+
+                        const nx = -dy / len, ny = dxLine / len;
+                        const toFontX = (cx) => cx * SCALE + dx; // 应用水平平移
                         const toFontY = (cy) => (CANVAS_SIZE - cy) * SCALE - 200;
-                        
+
                         const w1 = (p1.w || stroke.width) / 2;
                         const w2 = (p2.w || stroke.width) / 2;
 
-                        // 左边界点（笔画轮廓左侧）
                         const leftP1 = { x: toFontX(p1.x + nx * w1), y: toFontY(p1.y + ny * w1) };
                         const leftP2 = { x: toFontX(p2.x + nx * w2), y: toFontY(p2.y + ny * w2) };
-                        leftSide.push(leftP1);
-                        if (i === pts.length - 2) leftSide.push(leftP2);
-                        
-                        // 右边界点（笔画轮廓右侧）
                         const rightP1 = { x: toFontX(p1.x - nx * w1), y: toFontY(p1.y - ny * w1) };
                         const rightP2 = { x: toFontX(p2.x - nx * w2), y: toFontY(p2.y - ny * w2) };
+
+                        leftSide.push(leftP1);
+                        if (i === pts.length - 2) leftSide.push(leftP2);
                         rightSide.push(rightP1);
                         if (i === pts.length - 2) rightSide.push(rightP2);
-                        
-                        // 更新整体边界
-                        minX = Math.min(minX, leftP1.x, rightP1.x, leftP2.x, rightP2.x);
-                        maxX = Math.max(maxX, leftP1.x, rightP1.x, leftP2.x, rightP2.x);
                     }
 
                     if (leftSide.length > 0) {
@@ -537,18 +576,11 @@
                     }
                 });
 
-                // 根据实际轮廓宽度计算合适的 advanceWidth
-                let advanceWidth = 1000; // 默认值
-                if (minX !== Infinity && maxX !== -Infinity) {
-                    let width = maxX - minX;
-                    // 增加 10% 的边距，同时限制最小宽度 300，最大宽度 1000
-                    advanceWidth = Math.min(1000, Math.max(300, width * 1.1));
-                }
-
+                const unicodeVal = char.codePointAt(0);
                 glyphs.push(new opentype.Glyph({
                     name: 'uni' + unicodeVal.toString(16).toUpperCase(),
                     unicode: unicodeVal,
-                    advanceWidth: advanceWidth,
+                    advanceWidth: Math.max(300, advanceWidth), // 避免过窄
                     path: fontPath
                 }));
             }
@@ -563,8 +595,7 @@
             });
             font.names.fontFamily.en = appSettings.fontNameEn;
             font.names.fullName.en = appSettings.fontNameEn;
-            
-            // 手动下载
+
             try {
                 const buffer = font.toArrayBuffer();
                 const blob = new Blob([buffer], { type: 'application/font-sfnt' });
@@ -595,20 +626,54 @@
         }
 
         function drawGrid() {
-            gridCtx.clearRect(0,0,320,320); 
-            applyTransform(gridCtx);
-            gridCtx.strokeStyle='#ffcccc'; 
-            gridCtx.lineWidth= 1 / canvasScale;
-            gridCtx.strokeRect(0,0,320,320);
-            gridCtx.beginPath();
-            gridCtx.moveTo(160,0); gridCtx.lineTo(160,320);
-            gridCtx.moveTo(0,160); gridCtx.lineTo(320,160);
-            gridCtx.moveTo(0,0); gridCtx.lineTo(320,320);
-            gridCtx.moveTo(320,0); gridCtx.lineTo(0,320);
-            gridCtx.stroke();
-            gridCtx.restore();
-        }
+            gridCtx.clearRect(0, 0, 320, 320);
+            applyTransform(gridCtx); // 应用缩放和平移
 
+            // ---- 1. 绘制外边框（红色） ----
+            gridCtx.strokeStyle = '#ffcccc';
+            gridCtx.lineWidth = 1 / canvasScale;
+            gridCtx.strokeRect(0, 0, 320, 320);
+
+            // ---- 2. 绘制米字格（红色十字和对角线） ----
+            gridCtx.beginPath();
+            gridCtx.moveTo(160, 0); gridCtx.lineTo(160, 320);   // 垂直中线
+            gridCtx.moveTo(0, 160); gridCtx.lineTo(320, 160);   // 水平中线
+            gridCtx.moveTo(0, 0); gridCtx.lineTo(320, 320);     // 对角线
+            gridCtx.moveTo(320, 0); gridCtx.lineTo(0, 320);     // 另一条对角线
+            gridCtx.strokeStyle = '#ffcccc';
+            gridCtx.stroke();
+
+            // ---- 3. 绘制九宫格辅助线（灰色虚线） ----
+            const third = 320 / 3; // 三等分点坐标
+            gridCtx.beginPath();
+            gridCtx.strokeStyle = '#cccccc';               // 浅灰色
+            gridCtx.lineWidth = 0.8 / canvasScale;         // 细线，适应缩放
+            // 设置虚线样式：线段长度 5px，间隔 3px（均根据缩放调整，保持屏幕视觉一致）
+            gridCtx.setLineDash([5 / canvasScale, 3 / canvasScale]);
+
+            // 垂直三等分线
+            gridCtx.moveTo(third, 0); gridCtx.lineTo(third, 320);
+            gridCtx.moveTo(third * 2, 0); gridCtx.lineTo(third * 2, 320);
+            // 水平三等分线
+            gridCtx.moveTo(0, third); gridCtx.lineTo(320, third);
+            gridCtx.moveTo(0, third * 2); gridCtx.lineTo(320, third * 2);
+            gridCtx.stroke();
+
+            // ---- 4. 绘制回宫格内框（蓝色虚线） ----
+            const innerSize = 200; // 内框边长，可根据需要调整
+            const margin = (320 - innerSize) / 2; // 居中边距
+            gridCtx.strokeStyle = '#3366cc';       // 蓝色
+            gridCtx.lineWidth = 1 / canvasScale;
+            // 使用虚线，区别于外框
+            gridCtx.setLineDash([6 / canvasScale, 4 / canvasScale]);
+            gridCtx.strokeRect(margin, margin, innerSize, innerSize);
+            // 可以选择添加内框的对角线，但为了简洁暂时不加
+
+            // 恢复实线，避免影响其他绘制
+            gridCtx.setLineDash([]);
+            gridCtx.restore(); // 恢复上下文变换
+
+        }
         function initCanvasEvents() {
             canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', move);
             canvas.addEventListener('mouseup', end); canvas.addEventListener('mouseout', () => isDrawing=false);
@@ -826,6 +891,60 @@
         // 绑定预览事件
         refreshTestBtn.addEventListener('click', () => drawTestPreview(testInput.value));
         testInput.addEventListener('input', () => drawTestPreview(testInput.value));
+
+        // ================= 8. 备份与导入功能 =================
+        document.getElementById('saveJsonButton').addEventListener('click', function() {
+            const backup = {
+                version: '1.0',
+                appSettings: { ...appSettings },
+                allGlyphData: allGlyphData,
+                currentListKey: currentListKey,
+                charList: charList,
+                currentIndex: currentIndex
+            };
+            const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = (appSettings.fontNameEn || 'backup') + '_backup.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('loadJsonInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                try {
+                    const backup = JSON.parse(ev.target.result);
+                    if (backup.version !== '1.0') {
+                        alert('不支持的备份版本');
+                        return;
+                    }
+                    // 恢复设置
+                    Object.assign(appSettings, backup.appSettings);
+                    allGlyphData = backup.allGlyphData;
+                    currentListKey = backup.currentListKey;
+                    charList = backup.charList;
+                    currentIndex = backup.currentIndex;
+                    if (currentIndex >= charList.length) currentIndex = 0;
+                    // 同步设置到 UI
+                    syncSettingsToUI();
+                    // 更新界面
+                    updateUI();
+                    // 刷新测试预览
+                    if (testInput.value) drawTestPreview(testInput.value);
+                    // 清除文件选择
+                    e.target.value = '';
+                } catch (err) {
+                    alert('导入失败：' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        });
     </script>
 </body>
 </html>

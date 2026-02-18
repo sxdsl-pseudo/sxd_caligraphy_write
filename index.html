@@ -124,11 +124,17 @@
 
     <!-- 测试预览区域 -->
     <div id="test-container" style="margin-top:20px; width:100%; max-width:600px;">
-        <div style="display:flex; gap:10px; align-items:center;">
-            <input type="text" id="testInput" placeholder="输入文字测试..." style="flex:1; padding:8px; border:1px solid #ddd; border-radius:5px;">
+        <textarea id="testInput" rows="3" placeholder="输入文字测试（支持换行）..." 
+            style="width:100%; padding:8px; border:1px solid #ddd; border-radius:5px; resize:vertical; box-sizing:border-box; margin-bottom:8px;"></textarea>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
             <button id="refreshTestBtn" class="butt" style="width:auto; padding:0 15px;">预览</button>
+            <div class="control-group" style="margin:0;">
+                <label style="font-size:0.9rem;">🔍 预览缩放</label>
+                <input id="testZoomSlider" type="range" min="0.2" max="2.0" step="0.1" value="1.0" style="width:80px;">
+                <span id="testZoomValue" style="font-size:0.8rem; min-width:40px;">1.0x</span>
+            </div>
         </div>
-        <canvas id="testCanvas" width="400" height="200" style="border:1px solid #ccc; margin-top:40px; margin-left:40px; background:#fff; border-radius:5px;"></canvas>
+        <canvas id="testCanvas" width="350" height="200" style="border:1px solid #ccc; margin-top:40px; margin-left:40px;  background:#fff; border-radius:5px;"></canvas>
     </div>
 
     <div id="button-container">
@@ -702,6 +708,17 @@
         const testCanvas = document.getElementById('testCanvas');
         const testCtx = testCanvas.getContext('2d');
         const refreshTestBtn = document.getElementById('refreshTestBtn');
+        // 预览缩放控制
+        const testZoomSlider = document.getElementById('testZoomSlider');
+        const testZoomValue = document.getElementById('testZoomValue');
+        let testZoom = 1.0; // 默认缩放因子（基于基础比例）
+
+        testZoomSlider.addEventListener('input', (e) => {
+            testZoom = parseFloat(e.target.value);
+            testZoomValue.innerText = testZoom.toFixed(1) + 'x';
+            // 如果有输入文字，立即刷新预览
+            if (testInput.value) drawTestPreview(testInput.value);
+        });
 
         // 计算单个字符的实际宽度（基于笔画点的最小/最大 x）
         function getCharWidth(char) {
@@ -732,64 +749,80 @@
             testCtx.clearRect(0, 0, testCanvas.width, testCanvas.height);
             if (!text) return;
 
-            const scale = testCanvas.height / CANVAS_SIZE * 0.8; // 缩放因子，占画布80%高度
-            const baseY = (testCanvas.height - CANVAS_SIZE * scale) / 2; // 垂直居中
-            let cursorX = 20; // 左边距
+            // 按换行符分割文本
+            const lines = text.split('\n');
+            
+            // 基础比例：使字符高度占画布高度的 80%（参考单行）
+            const baseScale = testCanvas.height / CANVAS_SIZE * 0.8;
+            const scale = baseScale * testZoom;
+            
+            // 行高 = 字符高度 × 1.2
+            const lineHeight = CANVAS_SIZE * scale * 1.2;
+            // 起始 Y 坐标（留出顶部边距）
+            let cursorY = lineHeight * 0.2;
 
             testCtx.lineCap = 'round';
             testCtx.lineJoin = 'round';
             testCtx.strokeStyle = '#000';
             testCtx.fillStyle = '#000';
-            testCtx.globalCompositeOperation = 'source-over';
 
-            for (let i = 0; i < text.length; i++) {
-                const char = text[i];
-                const strokes = allGlyphData[char];
+            for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+                const line = lines[lineIdx];
+                let cursorX = 20; // 每行左边距
 
-                // 未书写字符显示灰色占位框
-                if (!strokes || strokes.length === 0) {
-                    testCtx.save();
-                    testCtx.strokeStyle = '#ccc';
-                    testCtx.lineWidth = 2;
-                    testCtx.strokeRect(cursorX, baseY, 40 * scale, 320 * scale);
-                    testCtx.restore();
-                    cursorX += 40 * scale + 10;
-                    continue;
+                // 如果当前行起始位置超出画布底部，停止绘制
+                if (cursorY + CANVAS_SIZE * scale > testCanvas.height) break;
+
+                for (let i = 0; i < line.length; i++) {
+                    const char = line[i];
+                    const strokes = allGlyphData[char];
+
+                    // 未书写字符显示灰色占位框
+                    if (!strokes || strokes.length === 0) {
+                        testCtx.save();
+                        testCtx.strokeStyle = '#ccc';
+                        testCtx.lineWidth = 2;
+                        testCtx.strokeRect(cursorX, cursorY, 40 * scale, 320 * scale);
+                        testCtx.restore();
+                        cursorX += 40 * scale + 10;
+                        continue;
+                    }
+
+                    // 绘制该字符的所有笔画（忽略橡皮擦）
+                    strokes.forEach(stroke => {
+                        if (stroke.isEraser) return;
+                        const pts = stroke.points;
+                        if (pts.length < 2) return;
+
+                        for (let j = 0; j < pts.length - 1; j++) {
+                            const p1 = pts[j];
+                            const p2 = pts[j+1];
+
+                            testCtx.beginPath();
+                            testCtx.moveTo(cursorX + p1.x * scale, cursorY + p1.y * scale);
+                            testCtx.lineTo(cursorX + p2.x * scale, cursorY + p2.y * scale);
+
+                            const w = (p1.w + p2.w) / 2;
+                            testCtx.lineWidth = w * scale;
+                            testCtx.stroke();
+
+                            // 补充圆点使连接处平滑
+                            testCtx.beginPath();
+                            testCtx.arc(cursorX + p2.x * scale, cursorY + p2.y * scale, (w * scale) / 2, 0, Math.PI * 2);
+                            testCtx.fill();
+                        }
+                    });
+
+                    // 计算字符宽度并移动光标
+                    const charWidth = getCharWidth(char) * scale;
+                    cursorX += charWidth + 10;
+                    if (cursorX > testCanvas.width - 20) break; // 超出画布右侧则终止该行
                 }
 
-                // 遍历所有笔画（忽略橡皮擦）
-                strokes.forEach(stroke => {
-                    if (stroke.isEraser) return;
-                    const pts = stroke.points;
-                    if (pts.length < 2) return;
-
-                    for (let j = 0; j < pts.length - 1; j++) {
-                        const p1 = pts[j];
-                        const p2 = pts[j+1];
-
-                        testCtx.beginPath();
-                        testCtx.moveTo(cursorX + p1.x * scale, baseY + p1.y * scale);
-                        testCtx.lineTo(cursorX + p2.x * scale, baseY + p2.y * scale);
-
-                        // 线宽取两点平均，并乘以缩放因子
-                        const w = (p1.w + p2.w) / 2;
-                        testCtx.lineWidth = w * scale;
-                        testCtx.stroke();
-
-                        // 补充圆点使连接处平滑（可选）
-                        testCtx.beginPath();
-                        testCtx.arc(cursorX + p2.x * scale, baseY + p2.y * scale, (w * scale) / 2, 0, Math.PI * 2);
-                        testCtx.fill();
-                    }
-                });
-
-                // 计算当前字符宽度并移动光标
-                const charWidth = getCharWidth(char) * scale;
-                cursorX += charWidth + 10; // 添加10px字间距
-                if (cursorX > testCanvas.width - 20) break; // 超出画布停止
+                // 下一行起始 Y 坐标增加行高
+                cursorY += lineHeight;
             }
         }
-
         // 绑定预览事件
         refreshTestBtn.addEventListener('click', () => drawTestPreview(testInput.value));
         testInput.addEventListener('input', () => drawTestPreview(testInput.value));

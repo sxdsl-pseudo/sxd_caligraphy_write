@@ -133,20 +133,7 @@
         <span class="butt" id="loadJsonButton" onclick="document.getElementById('loadJsonInput').click()" title="导入备份">📥 导入</span>
     </div>
 
-    <!-- 测试预览区域 -->
-    <div id="test-container" style="margin-top:20px; width:100%; max-width:600px; display: flex; flex-direction: column;">
-        <textarea id="testInput" rows="3" placeholder="输入文字测试（支持换行）..." 
-            style="width:100%; padding:8px; border:1px solid #ddd; border-radius:5px; resize:vertical; box-sizing:border-box; margin-bottom:8px; order:2;"></textarea>
-        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; order:2;">
-            <button id="refreshTestBtn" class="butt" style="width:auto; padding:0 15px;">预览</button>
-            <div class="control-group" style="margin:0;">
-                <label style="font-size:0.9rem;">🔍 预览缩放</label>
-                <input id="testZoomSlider" type="range" min="0.2" max="1.0" step="0.1" value="1.0" style="width:80px;">
-                <span id="testZoomValue" style="font-size:0.8rem; min-width:40px;">1.0x</span>
-            </div>
-        </div>
-        <canvas id="testCanvas" width="350" height="200" style="border:1px solid #ccc; margin-top:600px; margin-left:40px; background:#fff; border-radius:5px; order:1;"></canvas>
-    </div>
+    
 
     <div id="settingsDialog" class="dialog">
         <div class="dialog-body">

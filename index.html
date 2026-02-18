@@ -477,8 +477,7 @@
         
         // ================= 6. TTF 生成算法 (支持变宽 + 动态字距) =================
         function generateAndDownloadFont() {
-            const LEFT_BEARING = 80;   // 左侧固定留白（字体单位，可自行调整）
-            const RIGHT_BEARING = 80;  // 右侧固定留白
+            const MIN_ADVANCE = 100;              // 最小字符宽度，防止过窄字符不可见
             const glyphs = [];
             const notdefPath = new opentype.Path();
             notdefPath.moveTo(200, 0); notdefPath.lineTo(200, 700); notdefPath.lineTo(800, 700); notdefPath.lineTo(800, 0); notdefPath.close();
@@ -529,10 +528,10 @@
 
                 if (allPoints.length === 0) continue; // 无有效笔画
 
-                // 计算平移量，使最左侧点对齐 LEFT_BEARING
-                const dx = LEFT_BEARING - minX;
-                const width = maxX - minX;                // 原始轮廓宽度
-                const advanceWidth = width + LEFT_BEARING + RIGHT_BEARING;
+                // 计算平移量，使最左点对齐到 0（不留左边空白）
+                const dx = -minX;
+                const width = maxX - minX;
+                const advanceWidth = Math.max(width, MIN_ADVANCE);
 
                 // ---------- 第二遍：构建字形路径，应用平移 ----------
                 const fontPath = new opentype.Path();
@@ -551,7 +550,7 @@
                         if (len === 0) continue;
 
                         const nx = -dy / len, ny = dxLine / len;
-                        const toFontX = (cx) => cx * SCALE + dx; // 应用水平平移
+                        const toFontX = (cx) => cx * SCALE + dx; // 应用水平平移，使最左点对齐 0
                         const toFontY = (cy) => (CANVAS_SIZE - cy) * SCALE - 200;
 
                         const w1 = (p1.w || stroke.width) / 2;
@@ -580,11 +579,12 @@
                 glyphs.push(new opentype.Glyph({
                     name: 'uni' + unicodeVal.toString(16).toUpperCase(),
                     unicode: unicodeVal,
-                    advanceWidth: Math.max(300, advanceWidth), // 避免过窄
+                    advanceWidth: advanceWidth,
                     path: fontPath
                 }));
             }
 
+            // 创建字体并下载
             const font = new opentype.Font({
                 familyName: appSettings.fontNameEn,
                 styleName: 'Regular',

@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>手写字体生成器 - 专业版</title>
+    <script src="https://cdn.jsdelivr.net/npm/opentype.js@latest/dist/opentype.min.js"></script>
+    
+    <style>
+        :root { --primary-color: #4a90e2; --bg-color: #f5f5f5; --panel-bg: #ffffff; --text-color: #333; --border-color: #ddd; --success-color: #e8f5e9; --success-border: #a5d6a7; --success-text: #2e7d32;}
+        body { font-family: "PingFang SC", "Microsoft YaHei", sans-serif; background-color: var(--bg-color); color: var(--text-color); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; user-select: none; overscroll-behavior: none; }
+        
+        /* 按钮样式 */
+        .butt { display: inline-flex; justify-content: center; align-items: center; width: 44px; height: 44px; background: var(--panel-bg); border: 1px solid var(--border-color); border-radius: 8px; cursor: pointer; font-size: 1.4rem; margin: 0 4px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: all 0.1s; }
+        .butt:active { transform: scale(0.92); background: #e0e0e0; }
+        .butt.active { background: #333; color: #fff; border-color: #333; }
+        
+        /* 布局 */
+        #list-container, #demo-container, #slider-container, #button-container, #navi-container { margin-bottom: 12px; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; width: 100%; max-width: 600px; }
+        
+        /* 画布区域 */
+        #canvas-frame { position: relative; width: 320px; height: 320px; margin: 10px auto; display: flex; justify-content: center; align-items: center; z-index: 10; border: 1px dashed #ccc; }
+        #canvas-wrapper { position: relative; width: 320px; height: 320px; border: 1px solid #999; background: #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.15); overflow: hidden; }
+        canvas { position: absolute; top: 0; left: 0; touch-action: none; }
+        #gridCanvas { z-index: 1; pointer-events: none; }
+        #drawingCanvas { z-index: 2; cursor: crosshair; }
+
+        /* 控件 */
+        select, input[type=text], input[type=number] { padding: 8px; border-radius: 5px; border: 1px solid var(--border-color); font-size: 1rem; }
+        .control-group { display: flex; align-items: center; background: #fff; padding: 5px 10px; border-radius: 20px; border: 1px solid #eee; margin: 5px; }
+        .control-group label { margin-right: 5px; font-size: 0.9rem; white-space: nowrap;}
+        input[type=range] { width: 100px; }
+        
+        /* 弹窗系统 */
+        .dialog { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 3000; justify-content: center; align-items: center; }
+        .dialog.active { display: flex; }
+        .dialog-body { background: #fff; padding: 20px; border-radius: 12px; width: 90%; max-width: 500px; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; position: relative; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .close-btn { position: absolute; top: 10px; right: 15px; font-size: 1.5rem; cursor: pointer; color: #888; }
+        
+        /* 设置面板特有样式 */
+        .setting-item { display: flex; flex-direction: column; gap: 5px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .setting-item label { font-weight: bold; font-size: 0.9rem; color: #555; }
+        .setting-row { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+        .setting-val { font-size: 0.9rem; color: var(--primary-color); font-family: monospace; width: 40px; text-align: right; }
+
+        /* 预览网格 */
+        #preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(45px, 1fr)); gap: 5px; margin-top: 10px; }
+        .char-cell { width: 100%; aspect-ratio: 1; display: flex; justify-content: center; align-items: center; border: 1px solid #eee; border-radius: 4px; font-size: 1.5rem; cursor: pointer; background: #fff; overflow: hidden; }
+        .char-cell.done { border: 2px solid var(--success-text); }
+        .char-cell svg { width: 100%; height: 100%; display: block; }
+        .char-cell.current { border: 2px solid var(--primary-color); box-shadow: 0 0 5px var(--primary-color); }
+        
+        textarea { width: 100%; height: 150px; padding: 10px; box-sizing: border-box; }
+        .loading-mask { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 4000; color: white; justify-content: center; align-items: center; flex-direction: column; }
+        
+        #downloadTTFButton { background: var(--primary-color); color: white; border: none; padding: 0 20px; font-size: 1rem; width: auto; }
+    </style>
+</head>
+<body>
+
+    <div id="initLoadingMask" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #fff; z-index: 5000; display: flex; justify-content: center; align-items: center; flex-direction: column;">
+        <h2 style="color: #4a90e2;">正在加载字库数据...</h2>
+        <p>请确保使用本地服务器 (localhost) 运行此网页</p>
+    </div>
+
+    <div id="list-container">
+        <select id="listSelect" style="max-width: 200px;">
+            <option value="general1">通用规范一级 (3500字)</option>
+            <option value="general2">通用规范二级 (3000字)</option>
+            <option value="punctuations">标点符号</option>
+            <option value="custom">📝 自定义/粘贴...</option>
+        </select>
+        <span class="butt" id="canvasListButton" title="预览全表">👓</span>
+        <div style="font-size: 0.85rem; color: #666; margin-left: 10px;">
+            <span id="progressText">0 / 0</span>
+        </div>
+    </div>
+
+    <div id="demo-container">
+        <span class="butt" id="prevButton">👈</span>
+        <div style="text-align: center; min-width: 120px;">
+            <div id="glyphName" style="font-size: 0.85rem; color: #666; font-family: monospace;">Loading...</div>
+            <span id="charSeq" style="color:#d00; font-size: 3.5rem; line-height: 1; font-family: KaiTi, STKaiti, serif;">...</span>
+        </div>
+        <span class="butt" id="nextButton">👉</span>
+    </div>
+
+    <div id="canvas-frame">
+        <div id="canvas-wrapper">
+            <canvas id="gridCanvas" width="320" height="320"></canvas>
+            <canvas id="drawingCanvas" width="320" height="320"></canvas>
+        </div>
+    </div>
+
+    <div id="slider-container">
+        <div class="control-group">
+            <span class="butt active" id="penButton">🖌️</span>
+            <span class="butt" id="eraserButton">🚿</span>
+        </div>
+        <div class="control-group">
+            <label>粗细</label>
+            <input id="lineWidthSlider" type="range" min="4" max="40" value="16" />
+        </div>
+        <div class="control-group" style="border-color: #4a90e2;">
+            <label style="color:#4a90e2">🔍 缩放</label>
+            <input id="zoomSlider" type="range" min="0.8" max="2.0" step="0.1" value="1.0" />
+            <span id="zoomValue" style="font-size: 0.8rem; color: #4a90e2; width: 30px;">1.0x</span>
+        </div>
+    </div>
+
+    <div id="navi-container">
+        <span class="butt" id="settingButton" title="高级设置" style="background:#fff3e0; border-color:#ffcc80;">⚙️ 设置</span>
+        <button class="butt" id="downloadTTFButton">💾 生成 TTF</button>
+        <span class="butt" id="saveJsonButton" title="备份工程">📂 备份</span>
+        <input type="file" id="loadJsonInput" accept=".json" style="display:none">
+        <span class="butt" id="loadJsonButton" onclick="document.getElementById('loadJsonInput').click()" title="导入备份">📥 导入</span>
+    </div>
+
+    <div id="button-container">
+        <span class="butt" id="undoButton" title="撤销">↩️</span>
+        <span class="butt" id="clearButton" title="清空">🗑️</span>
+        <span style="border-left:1px solid #ccc; height:20px; margin:0 5px;"></span>
+        <span class="butt" id="moveLeftButton">⬅️</span>
+        <span class="butt" id="moveRightButton">➡️</span>
+        <span class="butt" id="moveUpButton">⬆️</span>
+        <span class="butt" id="moveDownButton">⬇️</span>
+    </div>
+
+    <div id="settingsDialog" class="dialog">
+        <div class="dialog-body">
+            <span class="close-btn" onclick="closeDialog('settingsDialog')">×</span>
+            <h3>⚙️ 字体 & 笔刷设置</h3>
+            
+            <div class="setting-item">
+                <label>字体信息 (导出用)</label>
+                <div class="setting-row">
+                    <input type="text" id="fontNameInput" placeholder="英文名 (如 MyFont)" value="MyHandwriting">
+                    <input type="text" id="fontFamilyInput" placeholder="中文名 (如 我的手写体)" value="我的手写体">
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <label>🖊️ 基础粗细 (Base Width)</label>
+                <div class="setting-row">
+                    <input type="range" id="set_baseWidth" min="4" max="50" value="16" style="flex:1">
+                    <span class="setting-val" id="val_baseWidth">16</span>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <label>🌊 笔压敏感度 (Simulated Pressure)</label>
+                <div class="setting-row">
+                    <input type="range" id="set_pressure" min="0" max="100" value="60" style="flex:1">
+                    <span class="setting-val" id="val_pressure">60%</span>
+                </div>
+                <div style="font-size:0.8rem; color:#888;">数值越高，书写速度越快时线条越细。</div>
+            </div>
+
+            <div class="setting-item">
+                <label>🖌️ 笔画锥度 (Taper / Start & End)</label>
+                <div class="setting-row">
+                    <input type="range" id="set_taper" min="0" max="100" value="40" style="flex:1">
+                    <span class="setting-val" id="val_taper">40%</span>
+                </div>
+                <div style="font-size:0.8rem; color:#888;">让笔画的起笔和收笔处自然变尖。</div>
+            </div>
+
+            <button onclick="closeDialog('settingsDialog')" style="margin-top:10px; padding:10px; background:var(--primary-color); color:white; border:none; border-radius:5px;">完成设置</button>
+        </div>
+    </div>
+
+    <div id="listup-container" class="dialog">
+        <div class="dialog-body">
+            <span class="close-btn" onclick="closeDialog('listup-container')">×</span>
+            <h3>字表预览</h3>
+            <div id="preview-grid"></div>
+        </div>
+    </div>
+
+    <div id="customDialog" class="dialog">
+        <div class="dialog-body">
+            <h3>粘贴自定义文字</h3>
+            <textarea id="customTextInput" placeholder="在此粘贴..."></textarea>
+            <div style="display:flex; justify-content:flex-end; gap:10px;">
+                <button onclick="closeDialog('customDialog')">取消</button>
+                <button onclick="applyCustomText()" style="background:var(--primary-color); color:#fff; border:none; padding:8px 15px; border-radius:5px;">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="loadingMask" class="loading-mask">
+        <div style="font-size: 2rem;">⚙️</div>
+        <p>正在打包字体...</p>
+    </div>
+
+    <script>
+        // ================= 1. 数据加载 =================
+        async function loadTxt(path) {
+            try {
+                const res = await fetch(path);
+                if (!res.ok) throw new Error("Load failed");
+                return (await res.text()).replace(/\s+/g, "");
+            } catch (e) { return ""; }
+        }
+
+        async function loadData() {
+            try {
+                const [general1, general2] = await Promise.all([
+                    loadTxt("data/level-1.txt"),  
+                    loadTxt("data/level-2.txt")
+                ]);
+                return {
+                    general1: general1 || "加载失败",
+                    general2: general2 || "加载失败",
+                    punctuations: "，。、；：？！……“”‘’（）【】《》——-～·"
+                };
+            } catch (err) {
+                alert("请使用本地服务器运行!");
+                return null;
+            }
+        }
+
+        // ================= 2. 全局状态与设置 =================
+        let appSettings = {
+            baseWidth: 16,
+            pressure: 0.6, // 0.0 - 1.0 (velocity influence)
+            taper: 0.4,    // 0.0 - 1.0 (length percentage)
+            fontNameEn: "MyHandwriting",
+            fontNameZh: "我的手写体"
+        };
+
+        let charDatasets = {}; 
+        let allGlyphData = {}; // 结构: { char: [ {points:[{x,y,w},...], isEraser} ] }
+        let currentListKey = 'general1';
+        let charList = "";
+        let currentIndex = 0;
+        let isDrawing = false;
+        let currentStrokePoints = []; // 临时存储点 {x, y, time}
+        let isEraser = false;
+        
+        let canvasScale = 1.0; 
+        const CANVAS_SIZE = 320;
+        const CENTER = CANVAS_SIZE / 2;
+
+        const canvas = document.getElementById('drawingCanvas');
+        const ctx = canvas.getContext('2d');
+        const gridCanvas = document.getElementById('gridCanvas');
+        const gridCtx = gridCanvas.getContext('2d');
+        const canvasWrapper = document.getElementById('canvas-wrapper');
+
+        // ================= 3. 初始化 =================
+        (async function initApp() {
+            const data = await loadData();
+            if (data) {
+                charDatasets = data;
+                document.getElementById('initLoadingMask').style.display = 'none';
+                charList = charDatasets[currentListKey];
+                initCanvasEvents();
+                drawGrid();
+                updateUI();
+                syncSettingsToUI();
+            }
+        })();
+
+        // ================= 4. 设置逻辑 =================
+        function syncSettingsToUI() {
+            document.getElementById('set_baseWidth').value = appSettings.baseWidth;
+            document.getElementById('val_baseWidth').innerText = appSettings.baseWidth;
+            document.getElementById('lineWidthSlider').value = appSettings.baseWidth; // 同步主界面滑块
+
+            document.getElementById('set_pressure').value = appSettings.pressure * 100;
+            document.getElementById('val_pressure').innerText = Math.round(appSettings.pressure * 100) + '%';
+
+            document.getElementById('set_taper').value = appSettings.taper * 100;
+            document.getElementById('val_taper').innerText = Math.round(appSettings.taper * 100) + '%';
+        }
+
+        // 绑定设置面板事件
+        document.getElementById('settingButton').onclick = () => document.getElementById('settingsDialog').classList.add('active');
+        
+        document.getElementById('set_baseWidth').oninput = function() {
+            appSettings.baseWidth = parseInt(this.value);
+            document.getElementById('val_baseWidth').innerText = this.value;
+            document.getElementById('lineWidthSlider').value = this.value; // 同步外部
+        };
+        // 外部滑块同步回设置
+        document.getElementById('lineWidthSlider').oninput = function() {
+            appSettings.baseWidth = parseInt(this.value);
+            document.getElementById('set_baseWidth').value = this.value;
+            document.getElementById('val_baseWidth').innerText = this.value;
+        };
+
+        document.getElementById('set_pressure').oninput = function() {
+            appSettings.pressure = parseInt(this.value) / 100;
+            document.getElementById('val_pressure').innerText = this.value + '%';
+        };
+        document.getElementById('set_taper').oninput = function() {
+            appSettings.taper = parseInt(this.value) / 100;
+            document.getElementById('val_taper').innerText = this.value + '%';
+        };
+        document.getElementById('fontNameInput').oninput = function() { appSettings.fontNameEn = this.value; };
+        document.getElementById('fontFamilyInput').oninput = function() { appSettings.fontNameZh = this.value; };
+
+
+        // ================= 5. 核心绘图 (带压感和锥度) =================
+
+        function applyTransform(context) {
+            context.save();
+            context.translate(CENTER, CENTER);
+            context.scale(canvasScale, canvasScale);
+            context.translate(-CENTER, -CENTER);
+        }
+
+        function getVirtualPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            let cx = e.clientX, cy = e.clientY;
+            if(e.touches && e.touches.length) { cx = e.touches[0].clientX; cy = e.touches[0].clientY; }
+            
+            // 计算虚拟坐标
+            const screenX = cx - rect.left;
+            const screenY = cy - rect.top;
+            const virtualX = (screenX - CENTER) / canvasScale + CENTER;
+            const virtualY = (screenY - CENTER) / canvasScale + CENTER;
+            
+            return { x: virtualX, y: virtualY, time: Date.now() };
+        }
+
+        function start(e) {
+            e.preventDefault(); 
+            isDrawing = true; 
+            currentStrokePoints = [];
+            const pos = getVirtualPos(e);
+            // 初始点加入一个基础宽度
+            pos.w = appSettings.baseWidth; 
+            currentStrokePoints.push(pos);
+            
+            renderCanvas(); // 实时重绘
+        }
+        
+        function move(e) {
+            if(!isDrawing) return; 
+            e.preventDefault();
+            const pos = getVirtualPos(e);
+            
+            // === 压感计算逻辑 ===
+            const lastPt = currentStrokePoints[currentStrokePoints.length - 1];
+            const dist = Math.hypot(pos.x - lastPt.x, pos.y - lastPt.y);
+            const timeDiff = pos.time - lastPt.time;
+            
+            // 速度 (pixels/ms)
+            const velocity = timeDiff > 0 ? dist / timeDiff : 0;
+            
+            // 动态宽度算法: 速度越快，宽度越细
+            // 系数 2 是经验值，可微调
+            let targetWidth = appSettings.baseWidth * (1 - velocity * appSettings.pressure * 0.5); 
+            // 限制最小宽度
+            targetWidth = Math.max(targetWidth, appSettings.baseWidth * 0.2);
+            
+            // 平滑处理：新宽度 = 旧宽度 * 0.6 + 新目标 * 0.4
+            pos.w = lastPt.w * 0.6 + targetWidth * 0.4;
+
+            currentStrokePoints.push(pos);
+            renderCanvas(); 
+        }
+        
+        function end(e) {
+            if(!isDrawing) return; 
+            isDrawing = false;
+            
+            // === 锥度处理 (Tapering) ===
+            // 结束后对整条线的头尾进行修饰
+            if (currentStrokePoints.length > 5 && appSettings.taper > 0) {
+                const len = currentStrokePoints.length;
+                const taperLen = Math.floor(len * appSettings.taper * 0.5); // 单侧锥度长度
+                const maxTaper = Math.min(taperLen, 10); // 限制最大锥度点数
+
+                for (let i = 0; i < maxTaper; i++) {
+                    const factor = (i + 1) / (maxTaper + 1); // 0.1 -> 1.0
+                    // 头部变细
+                    currentStrokePoints[i].w *= factor;
+                    // 尾部变细
+                    currentStrokePoints[len - 1 - i].w *= factor;
+                }
+            }
+
+            const char = charList[currentIndex];
+            if (!allGlyphData[char]) allGlyphData[char] = [];
+            
+            if(currentStrokePoints.length > 1) {
+                allGlyphData[char].push({
+                    points: JSON.parse(JSON.stringify(currentStrokePoints)), // 此时点里已经包含了 w (width)
+                    width: appSettings.baseWidth, // 保留基础宽度做参考
+                    isEraser: isEraser
+                });
+            }
+            renderCanvas();
+        }
+
+        function renderCanvas() {
+            ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+            const char = charList[currentIndex];
+            const savedStrokes = allGlyphData[char] || [];
+            
+            // 合并已保存的笔画和当前正在画的笔画
+            const strokesToRender = [...savedStrokes];
+            if (isDrawing && currentStrokePoints.length > 0) {
+                strokesToRender.push({
+                    points: currentStrokePoints,
+                    isEraser: isEraser,
+                    width: appSettings.baseWidth
+                });
+            }
+
+            applyTransform(ctx);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            strokesToRender.forEach(stroke => {
+                const pts = stroke.points;
+                if (pts.length < 1) return;
+
+                ctx.strokeStyle = stroke.isEraser ? '#ffffff' : '#000000';
+                ctx.globalCompositeOperation = stroke.isEraser ? 'destination-out' : 'source-over';
+
+                // === 绘制变宽线条 (模拟) ===
+                // Canvas 原生 stroke 不支持变宽，为了性能和效果，这里使用“圆点+连线”混合
+                // 或者简单使用 lineTo 但不断改变 lineWidth (效果一般会断裂)
+                // 最佳方案是绘制路径轮廓，但太慢。
+                // 妥协方案：每段画一条线，宽度取两点平均值
+                
+                for (let i = 0; i < pts.length - 1; i++) {
+                    const p1 = pts[i];
+                    const p2 = pts[i+1];
+                    
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    
+                    // 使用两点平均宽度
+                    // 如果是橡皮擦，固定使用基础宽度
+                    ctx.lineWidth = stroke.isEraser ? stroke.width : (p1.w + p2.w) / 2;
+                    ctx.stroke();
+                    
+                    // 补圆头防止断裂
+                    ctx.beginPath();
+                    ctx.arc(p2.x, p2.y, ctx.lineWidth/2, 0, Math.PI*2);
+                    ctx.fillStyle = ctx.strokeStyle;
+                    ctx.fill();
+                }
+            });
+            ctx.restore();
+            ctx.globalCompositeOperation = 'source-over';
+        }
+
+        // ================= 6. TTF 生成算法 (支持变宽) =================
+        
+        function generateAndDownloadFont() {
+            const glyphs = [];
+            const notdefPath = new opentype.Path();
+            notdefPath.moveTo(200, 0); notdefPath.lineTo(200, 700); notdefPath.lineTo(800, 700); notdefPath.lineTo(800, 0); notdefPath.close();
+            glyphs.push(new opentype.Glyph({ name: '.notdef', unicode: 0, advanceWidth: 1000, path: notdefPath }));
+            
+            const SCALE = 1000 / CANVAS_SIZE;
+
+            for (let char in allGlyphData) {
+                const strokes = allGlyphData[char];
+                if (!strokes || strokes.length === 0) continue;
+                const fontPath = new opentype.Path();
+                const unicodeVal = char.codePointAt(0);
+
+                strokes.forEach(stroke => {
+                    if (stroke.isEraser) return; 
+                    const pts = stroke.points;
+                    if (pts.length < 2) return;
+
+                    const leftSide = [], rightSide = [];
+                    for (let i = 0; i < pts.length - 1; i++) {
+                        const p1 = pts[i];
+                        const p2 = pts[i+1];
+                        let dx = p2.x - p1.x, dy = p2.y - p1.y;
+                        const len = Math.sqrt(dx*dx + dy*dy);
+                        if (len === 0) continue;
+                        
+                        const nx = -dy / len, ny = dx / len;
+                        const toFontX = (cx) => cx * SCALE;
+                        const toFontY = (cy) => (CANVAS_SIZE - cy) * SCALE - 200;
+                        
+                        const w1 = (p1.w || stroke.width) / 2;
+                        const w2 = (p2.w || stroke.width) / 2;
+
+                        leftSide.push({ x: toFontX(p1.x + nx * w1), y: toFontY(p1.y + ny * w1) });
+                        rightSide.push({ x: toFontX(p1.x - nx * w1), y: toFontY(p1.y - ny * w1) });
+
+                        if (i === pts.length - 2) {
+                            leftSide.push({ x: toFontX(p2.x + nx * w2), y: toFontY(p2.y + ny * w2) });
+                            rightSide.push({ x: toFontX(p2.x - nx * w2), y: toFontY(p2.y - ny * w2) });
+                        }
+                    }
+
+                    if (leftSide.length > 0) {
+                        fontPath.moveTo(leftSide[0].x, leftSide[0].y);
+                        for (let k = 1; k < leftSide.length; k++) fontPath.lineTo(leftSide[k].x, leftSide[k].y);
+                        for (let k = rightSide.length - 1; k >= 0; k--) fontPath.lineTo(rightSide[k].x, rightSide[k].y);
+                        fontPath.close();
+                    }
+                });
+
+                glyphs.push(new opentype.Glyph({
+                    name: 'uni' + unicodeVal.toString(16).toUpperCase(),
+                    unicode: unicodeVal,
+                    advanceWidth: 1000,
+                    path: fontPath
+                }));
+            }
+
+            const font = new opentype.Font({
+                familyName: appSettings.fontNameEn,
+                styleName: 'Regular',
+                unitsPerEm: 1000,
+                ascender: 800,
+                descender: -200,
+                glyphs: glyphs
+            });
+            font.names.fontFamily.en = appSettings.fontNameEn;
+            font.names.fullName.en = appSettings.fontNameEn;
+            
+            // ===== 替换原有的 font.download() 为手动下载 =====
+            try {
+                const buffer = font.toArrayBuffer();
+                const blob = new Blob([buffer], { type: 'application/font-sfnt' }); // TTF 的 MIME 类型
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = (appSettings.fontNameEn || 'MyHandwriting') + '.ttf'; // 强制使用 .ttf 扩展名
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                alert('字体生成失败：' + e.message);
+            }
+        }
+        // ================= 通用辅助 =================
+        function updateUI() {
+            if(!charList || charList.length === 0) return;
+            if (currentIndex >= charList.length) currentIndex = charList.length - 1;
+            
+            const realChars = Array.from(charList);
+            const char = realChars[currentIndex];
+            document.getElementById('charSeq').innerText = char;
+            const unicodeHex = char.codePointAt(0).toString(16).toUpperCase().padStart(4, '0');
+            document.getElementById('glyphName').innerText = `U+${unicodeHex}`;
+            document.getElementById('progressText').innerText = `${currentIndex + 1} / ${realChars.length}`;
+            renderCanvas();
+        }
+
+        function drawGrid() {
+            gridCtx.clearRect(0,0,320,320); 
+            applyTransform(gridCtx);
+            gridCtx.strokeStyle='#ffcccc'; 
+            gridCtx.lineWidth= 1 / canvasScale;
+            gridCtx.strokeRect(0,0,320,320);
+            gridCtx.beginPath();
+            gridCtx.moveTo(160,0); gridCtx.lineTo(160,320);
+            gridCtx.moveTo(0,160); gridCtx.lineTo(320,160);
+            gridCtx.moveTo(0,0); gridCtx.lineTo(320,320);
+            gridCtx.moveTo(320,0); gridCtx.lineTo(0,320);
+            gridCtx.stroke();
+            gridCtx.restore();
+        }
+
+        function initCanvasEvents() {
+            canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', move);
+            canvas.addEventListener('mouseup', end); canvas.addEventListener('mouseout', () => isDrawing=false);
+            canvas.addEventListener('touchstart', start, {passive:false}); canvas.addEventListener('touchmove', move, {passive:false});
+            canvas.addEventListener('touchend', end);
+        }
+
+        window.closeDialog = (id) => document.getElementById(id).classList.remove('active');
+        
+        // 预览 SVG 生成
+        document.getElementById('canvasListButton').onclick = function() {
+            const container = document.getElementById('preview-grid');
+            container.innerHTML = '';
+            const fragment = document.createDocumentFragment();
+            const realChars = Array.from(charList);
+
+            for (let i = 0; i < realChars.length; i++) {
+                const char = realChars[i];
+                const cell = document.createElement('div');
+                cell.className = 'char-cell';
+                const strokes = allGlyphData[char];
+
+                if (strokes && strokes.length > 0) {
+                    cell.classList.add('done');
+                    let svgPaths = '';
+                    strokes.forEach(s => {
+                        const color = s.isEraser ? '#ffffff' : '#000000';
+                        if(s.points && s.points.length > 0) {
+                            let d = `M ${s.points[0].x} ${s.points[0].y}`;
+                            // 预览时简单化，不画变宽效果以提高性能，或者取平均宽
+                            for(let k=1; k < s.points.length; k++) d += ` L ${s.points[k].x} ${s.points[k].y}`;
+                            // SVG 预览取第一点的宽度做参考
+                            const avgW = s.width; 
+                            svgPaths += `<path d="${d}" stroke="${color}" stroke-width="${avgW}" fill="none" stroke-linecap="round" stroke-linejoin="round"/>`;
+                        }
+                    });
+                    cell.innerHTML = `<svg viewBox="0 0 320 320">${svgPaths}</svg>`;
+                } else {
+                    cell.innerText = char;
+                }
+                
+                if (i === currentIndex) cell.classList.add('current');
+                cell.onclick = () => { currentIndex = i; updateUI(); closeDialog('listup-container'); };
+                fragment.appendChild(cell);
+            }
+            container.appendChild(fragment);
+            document.getElementById('listup-container').classList.add('active');
+        };
+
+        // 按钮事件
+        document.getElementById('undoButton').onclick = () => { const char = Array.from(charList)[currentIndex]; if(allGlyphData[char]) { allGlyphData[char].pop(); renderCanvas(); } };
+        document.getElementById('clearButton').onclick = () => { const char = Array.from(charList)[currentIndex]; allGlyphData[char] = []; renderCanvas(); };
+        document.getElementById('prevButton').onclick = () => { if(currentIndex>0) {currentIndex--; updateUI();} };
+        document.getElementById('nextButton').onclick = () => { if(currentIndex<Array.from(charList).length-1) {currentIndex++; updateUI();} };
+        document.getElementById('moveLeftButton').onclick = () => moveStrokes(-10, 0);
+        document.getElementById('moveRightButton').onclick = () => moveStrokes(10, 0);
+        document.getElementById('moveUpButton').onclick = () => moveStrokes(0, -10);
+        document.getElementById('moveDownButton').onclick = () => moveStrokes(0, 10);
+        document.getElementById('downloadTTFButton').onclick = async () => {
+            document.getElementById('loadingMask').style.display = 'flex';
+            setTimeout(() => { try { generateAndDownloadFont(); } catch(e) { alert(e.message); } finally { document.getElementById('loadingMask').style.display = 'none'; } }, 100);
+        };
+        document.getElementById('zoomSlider').addEventListener('input', (e) => {
+            canvasScale = parseFloat(e.target.value);
+            document.getElementById('zoomValue').innerText = canvasScale.toFixed(1) + 'x';
+            drawGrid(); renderCanvas();
+        });
+        document.getElementById('penButton').onclick = function() { isEraser=false; this.classList.add('active'); document.getElementById('eraserButton').classList.remove('active'); };
+        document.getElementById('eraserButton').onclick = function() { isEraser=true; this.classList.add('active'); document.getElementById('penButton').classList.remove('active'); };
+        document.getElementById('listSelect').onchange = (e) => {
+            if(e.target.value === 'custom') document.getElementById('customDialog').classList.add('active');
+            else { currentListKey = e.target.value; charList = charDatasets[currentListKey]; currentIndex = 0; updateUI(); }
+        };
+        window.applyCustomText = function() {
+            const text = document.getElementById('customTextInput').value;
+            if(!text) return;
+            const uniqueChars = Array.from(new Set(Array.from(text))).filter(c => c.trim() !== '');
+            charDatasets['custom'] = uniqueChars.join('');
+            currentListKey = 'custom'; charList = charDatasets['custom']; currentIndex = 0;
+            closeDialog('customDialog'); updateUI();
+        };
+        const moveStrokes = (dx, dy) => {
+            const char = Array.from(charList)[currentIndex];
+            if(!allGlyphData[char]) return;
+            allGlyphData[char].forEach(s => s.points.forEach(p => { p.x+=dx; p.y+=dy; }));
+            renderCanvas();
+        };
+    </script>
+</body>
+</html>
